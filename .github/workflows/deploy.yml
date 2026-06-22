@@ -1,61 +1,13 @@
-name: Deploy to Server
+name: Deploy OTel Collector Stack
 
 on:
   push:
     branches: [ main, master ]
   workflow_dispatch:
 
-env:
-  REGISTRY: ghcr.io
-  IMAGE_NAME: ${{ github.repository }}
-  PYTHON_IMAGE_NAME: ghcr.io/nanlindev/n8n_portfolio/otel-collector-stack
-
 jobs:
-  build-and-push-python:
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      packages: write
-
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Log in to GitHub Container Registry
-        uses: docker/login-action@v3
-        with:
-          registry: ${{ env.REGISTRY }}
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Extract metadata for Python Service
-        id: meta
-        uses: docker/metadata-action@v5
-        with:
-          images: ${{ env.PYTHON_IMAGE_NAME }}
-          tags: |
-            type=sha,prefix=
-            type=ref,event=branch
-            latest
-
-      - name: Build and push Python AI Service image
-        uses: docker/build-push-action@v5
-        with:
-          context: ./python-service
-          push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-
   deploy:
-    needs: build-and-push-python
     runs-on: ubuntu-latest
-    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
-
     steps:
       - name: Deploy to Server via SSH
         uses: appleboy/ssh-action@v1.0.0
@@ -64,52 +16,38 @@ jobs:
           username: deploy
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           script: |
-            # 1. 登录 GHCR
-            echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u nanlindev --password-stdin
-            
-            # 2. 进入项目目录
-            cd /home/deploy/projects/otel-collector-stack
-            
-            # 创建/更新 .env 文件（仅当不存在或需要更新时）
-            if [ ! -f .env ]; then
-              echo "LANGFUSE_PUBLIC_KEY=${{ secrets.LANGFUSE_PUBLIC_KEY }}" >> .env
-              echo "LANGFUSE_SECRET_KEY=${{ secrets.LANGFUSE_SECRET_KEY }}" >> .env
-              echo "AUTHORIZATION=${{ secrets.AUTHORIZATION }}" >> .env
-              chmod 600 .env
-              echo "✅ .env file created"
-            else
-              # 如果要强制覆盖，也可以每次重新生成
-              echo "LANGFUSE_PUBLIC_KEY=${{ secrets.LANGFUSE_PUBLIC_KEY }}" > .env
-              echo "LANGFUSE_SECRET_KEY=${{ secrets.LANGFUSE_SECRET_KEY }}" >> .env
-              echo "AUTHORIZATION=${{ secrets.AUTHORIZATION }}" >> .env
-              chmod 600 .env
-              echo "✅ .env file updated"
+            # 1. 确保项目目录存在（首次部署时 clone）
+            PROJECT_DIR="/home/deploy/projects/otel-collector-stack"
+            if [ ! -d "$PROJECT_DIR" ]; then
+              echo "🔧 First deployment: cloning repository..."
+              git clone https://github.com/nanlindev/otel-collector-stack.git "$PROJECT_DIR"
             fi
+            cd "$PROJECT_DIR"
 
-            # 3. 拉取最新代码
+            # 2. 拉取最新代码
+            echo "📦 Pulling latest code..."
             git pull origin main
-            
-            # 4. 确保 .env 文件存在且权限正确 (可选，如果.env不在git里)
-            # chmod 600 .env
-            
-            # 5. 拉取最新的 Python 服务镜像
-            docker pull ${{ env.PYTHON_IMAGE_NAME }}:latest
-            
-            # 6. 重新构建并启动所有服务
-            docker compose up -d
-            
-            # 7. 清理未使用的镜像
-            docker image prune -f
-            
-            # 8. 登出
-            docker logout ghcr.io
 
-      - name: Notify deployment status
-        if: always()
-        run: |
-          if [ ${{ job.status }} == 'success' ]; then
-            echo "✅ Deployment successful!"
-          else
-            echo "❌ Deployment failed!"
-            exit 1
-          fi
+            # 3. 写入 .env 文件（每次都覆盖确保最新密钥）
+            echo "🔑 Writing .env file..."
+            cat > .env << 'EOF'
+            LANGFUSE_PUBLIC_KEY=${{ secrets.LANGFUSE_PUBLIC_KEY }}
+            LANGFUSE_SECRET_KEY=${{ secrets.LANGFUSE_SECRET_KEY }}
+            AUTHORIZATION=${{ secrets.AUTHORIZATION }}
+            EOF
+            chmod 600 .env
+
+            # 4. 确保外部网络存在
+            echo "🌐 Ensuring proxy_network exists..."
+            docker network create proxy_network --driver bridge 2>/dev/null || true
+
+            # 5. 拉取最新镜像并启动容器
+            echo "🚀 Deploying OTel Collector..."
+            docker compose pull
+            docker compose up -d
+
+            # 6. 清理旧镜像
+            echo "🧹 Cleaning up unused images..."
+            docker image prune -f
+
+            echo "✅ Deployment complete!"
