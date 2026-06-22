@@ -1,0 +1,21 @@
+services:
+    otel-collector:
+        image: otel/opentelemetry-collector-contrib:0.114.0
+        volumes:
+            # 对齐了 contrib 镜像的标准内部路径
+            - ./otel-collector-config.yaml:/etc/otelcol-contrib/config.yaml
+        ports:
+            - "4317:4317" # OTLP gRPC 接收端口
+            - "4318:4318" # OTLP HTTP 接收端口
+        command: [ "--config=/etc/otelcol-contrib/config.yaml" ]
+        environment:
+            # 【核心】从宿主机的 .env 自动读取变量，并安全注入到 Collector 容器内
+            - LANGFUSE_PUBLIC_KEY=${LANGFUSE_PUBLIC_KEY}
+            - LANGFUSE_SECRET_KEY=${LANGFUSE_SECRET_KEY}
+            - AUTHORIZATION=${AUTHORIZATION}
+        restart: unless-stopped
+        networks:
+            - proxy_network
+networks:
+    proxy_network:
+        external: true

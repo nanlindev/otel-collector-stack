@@ -1,0 +1,38 @@
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+      http:
+        endpoint: 0.0.0.0:4318
+
+processors:
+  batch:
+    timeout: 1s
+    send_batch_size: 1024
+  resource:
+    attributes:
+      - key: service.source
+        value: n8n
+        action: upsert
+
+exporters:
+  debug:
+    verbosity: detailed
+
+  otlp/jaeger:
+    endpoint: "jaeger:4317" 
+    tls:
+      insecure: true
+
+  otlphttp/langfuse:
+    endpoint: "http://langfuse-web:3000/api/public/otel"
+    headers:
+      Authorization: "Basic ${AUTHORIZATION}"
+      x-langfuse-ingestion-version: "4"
+service:
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [batch, resource]
+      exporters: [debug, otlp/jaeger, otlphttp/langfuse]
