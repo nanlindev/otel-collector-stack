@@ -36,7 +36,7 @@ jobs:
             AUTHORIZATION=${{ secrets.AUTHORIZATION }}
             EOF
             chmod 600 .env
-
+ 
             # 4. 确保外部网络存在
             echo "🌐 Ensuring proxy_network exists..."
             docker network create proxy_network --driver bridge 2>/dev/null || true
